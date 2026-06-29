@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cron from 'node-cron';
+import { initDb } from './db.js';
 import { savePicks } from './store.js';
 import { buildRecap } from './report.js';
 import { postDiscordReport } from './discord.js';
@@ -34,17 +35,19 @@ app.get('/', (req, res) => {
   res.json({
     ok: true,
     name: 'mlb-results-recap-bot',
+    storage: 'postgres',
     endpoints: ['/save-picks', '/run-recap']
   });
 });
 
-app.post('/save-picks', requireSecret, (req, res) => {
+app.post('/save-picks', requireSecret, async (req, res) => {
   try {
-    const result = savePicks(req.body);
+    const result = await savePicks(req.body);
 
     res.json({
       ok: true,
-      saved: result.count
+      added: result.added,
+      savedTotal: result.count
     });
   } catch (err) {
     console.error('Save picks failed:', err);
@@ -58,7 +61,9 @@ app.post('/save-picks', requireSecret, (req, res) => {
 app.post('/run-recap', requireSecret, async (req, res) => {
   try {
     const date = req.body.date || chicagoDateOffset(-1);
-    const report = await buildRecap(date, { updateSeason: req.body.updateSeason !== false });
+    const report = await buildRecap(date, {
+      updateSeason: req.body.updateSeason !== false
+    });
 
     await postDiscordReport({
       webhookUrl: process.env.RECAP_WEBHOOK_URL,
@@ -103,6 +108,8 @@ cron.schedule(
 if (process.argv[2] === 'recap') {
   const date = process.argv[3] || chicagoDateOffset(-1);
 
+  await initDb();
+
   const report = await buildRecap(date, {
     updateSeason: true
   });
@@ -117,6 +124,8 @@ if (process.argv[2] === 'recap') {
 }
 
 const PORT = process.env.PORT || 3000;
+
+await initDb();
 
 app.listen(PORT, () => {
   console.log(`Recap bot running on port ${PORT}`);

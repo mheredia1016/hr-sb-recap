@@ -20,7 +20,7 @@ function topScore(players) {
 }
 
 async function grade(type, date) {
-  const saved = loadPicks(type, date);
+  const saved = await loadPicks(type, date);
 
   if (!saved?.players?.length) {
     return [];
@@ -31,6 +31,24 @@ async function grade(type, date) {
   const results = [];
 
   for (const player of saved.players) {
+    if (!player.gamePk || !player.playerId) {
+      results.push({
+        ...player,
+        game: player.game || 'Unknown Game',
+        actual: {
+          hr: 0,
+          sb: 0,
+          cs: 0,
+          hits: 0,
+          atBats: 0,
+          rbi: 0,
+          runs: 0
+        },
+        hit: false
+      });
+      continue;
+    }
+
     if (!boxscores.has(player.gamePk)) {
       boxscores.set(player.gamePk, await getBoxscore(player.gamePk));
     }
@@ -113,17 +131,19 @@ function buildSection({ title, emoji, players, type }) {
   const elite = players.filter(p => Number(p.score || 0) >= 90);
   const eliteHits = elite.filter(p => p.hit);
 
+  const topMisses = topScore(misses).slice(0, 25);
+  const topTen = topScore(players).slice(0, 10);
+  const topTenHits = topTen.filter(p => p.hit);
+
   const hitLines = hits.length
     ? hits.map(p => buildHitLine(p, type)).join('\n')
     : 'None';
 
-  const missLines = misses.length
-    ? misses.map(p => buildMissLine(p, type)).join('\n')
+  const missLines = topMisses.length
+    ? topMisses.map(p => buildMissLine(p, type)).join('\n')
     : 'None';
 
-  const best = hits.length
-    ? topScore(hits)[0]
-    : null;
+  const best = hits.length ? topScore(hits)[0] : null;
 
   const bestLine = best
     ? type === 'hr'
@@ -131,26 +151,32 @@ function buildSection({ title, emoji, players, type }) {
       : `🔥 Best call: **${best.name}** (${scoreLabel(best.score)}) — ${best.actual.sb} SB`
     : '🔥 Best call: None';
 
+  const hiddenMissCount = Math.max(0, misses.length - topMisses.length);
+  const hiddenMissLine = hiddenMissCount
+    ? `\n_Only showing top ${topMisses.length} misses by score. ${hiddenMissCount} lower-score misses hidden._`
+    : '';
+
   return `
 ${emoji} **${title}**
 
-**Hits**
+**Hits (${hits.length})**
 ${hitLines}
 
-**Misses**
-${missLines}
+**Top Misses (${misses.length})**
+${missLines}${hiddenMissLine}
 
 **Daily Summary**
 Posted: ${players.length}
 Hit: ${hits.length}
 Rate: ${pct(hits.length, players.length)}
+Top 10 Scores: ${topTenHits.length}/${topTen.length} (${pct(topTenHits.length, topTen.length)})
 Elite 90+: ${eliteHits.length}/${elite.length} (${pct(eliteHits.length, elite.length)})
 ${bestLine}
 `.trim();
 }
 
 function buildSeasonLine(stats, type, label) {
-  const s = stats[type] || {
+  const s = stats?.[type] || {
     posted: 0,
     hits: 0,
     elitePosted: 0,
@@ -165,7 +191,7 @@ export async function buildRecap(date, { updateSeason = true } = {}) {
   const sbResults = await grade('sb', date);
 
   const seasonResult = updateSeason
-    ? updateSeasonStats(date, hrResults, sbResults)
+    ? await updateSeasonStats(date, hrResults, sbResults)
     : { stats: null, updated: false };
 
   const season = seasonResult.stats;
