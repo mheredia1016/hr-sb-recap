@@ -22,6 +22,10 @@ function cleanPlayer(player) {
   };
 }
 
+function playerKey(player) {
+  return `${player.gamePk}:${player.playerId}`;
+}
+
 export function savePicks({ type, date, players }) {
   if (!['hr', 'sb'].includes(type)) {
     throw new Error('type must be hr or sb');
@@ -37,11 +41,44 @@ export function savePicks({ type, date, players }) {
 
   ensureDir(PREGAME_DIR);
 
+  const file = path.join(PREGAME_DIR, `${type}-${date}.json`);
+
+  let existing = {
+    type,
+    date,
+    savedAt: new Date().toISOString(),
+    players: []
+  };
+
+  if (fs.existsSync(file)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!Array.isArray(existing.players)) existing.players = [];
+    } catch {
+      existing.players = [];
+    }
+  }
+
   const cleaned = players
     .map(cleanPlayer)
     .filter(p => p.playerId && p.name && p.gamePk);
 
-  const file = path.join(PREGAME_DIR, `${type}-${date}.json`);
+  const merged = new Map();
+
+  for (const p of existing.players.map(cleanPlayer)) {
+    if (p.playerId && p.gamePk) {
+      merged.set(playerKey(p), p);
+    }
+  }
+
+  for (const p of cleaned) {
+    merged.set(playerKey(p), p);
+  }
+
+  const mergedPlayers = Array.from(merged.values()).sort((a, b) => {
+    if (a.gamePk !== b.gamePk) return a.gamePk - b.gamePk;
+    return Number(b.score || 0) - Number(a.score || 0);
+  });
 
   fs.writeFileSync(
     file,
@@ -49,9 +86,10 @@ export function savePicks({ type, date, players }) {
       {
         type,
         date,
-        savedAt: new Date().toISOString(),
-        count: cleaned.length,
-        players: cleaned
+        savedAt: existing.savedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        count: mergedPlayers.length,
+        players: mergedPlayers
       },
       null,
       2
@@ -60,7 +98,8 @@ export function savePicks({ type, date, players }) {
 
   return {
     file,
-    count: cleaned.length
+    added: cleaned.length,
+    count: mergedPlayers.length
   };
 }
 
